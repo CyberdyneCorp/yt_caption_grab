@@ -12,6 +12,18 @@ A FastAPI-based REST API that extracts transcripts from YouTube videos with mult
 - 🛡️ Comprehensive error handling
 - 📖 Interactive API documentation
 
+## Project Structure
+
+```
+yt_caption_grab/
+├── src/
+│   ├── main.py              # Main FastAPI application
+│   └── debug_endpoint.py    # Debug utilities
+├── README.md                # Project documentation
+├── requirements.txt         # Python dependencies
+└── .gitignore              # Git ignore rules
+```
+
 ## Installation
 
 1. Clone or download this repository
@@ -26,7 +38,7 @@ pip install -r requirements.txt
 ### Starting the Server
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8001
+uvicorn src.main:app --host 0.0.0.0 --port 8001
 ```
 
 The server will start on `http://localhost:8001`
@@ -35,13 +47,13 @@ The server will start on `http://localhost:8001`
 
 ```bash
 # Run with auto-reload for development
-uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+uvicorn src.main:app --host 0.0.0.0 --port 8001 --reload
 
 # Run on default port 8000
-uvicorn main:app --host 0.0.0.0 --port 8000
+uvicorn src.main:app --host 0.0.0.0 --port 8000
 
 # Run only on localhost
-uvicorn main:app --port 8001
+uvicorn src.main:app --port 8001
 ```
 
 ### API Documentation
