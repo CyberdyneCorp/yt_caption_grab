@@ -82,6 +82,10 @@ pytest tests/test_main.py::TestVideoIdExtraction
 - ✅ Video ID extraction from various YouTube URL formats
 - ✅ Error handling for invalid inputs
 - ✅ Request validation and parameter handling
+- ✅ Health check endpoint functionality
+- ✅ Download endpoint with format validation
+- ✅ Batch processing with multiple URLs
+- ✅ Error handling for batch operations
 
 ### Adding New Tests
 
@@ -122,6 +126,24 @@ Once the server is running, visit:
 - **ReDoc**: http://localhost:8001/redoc
 
 ### Endpoints
+
+#### Health Check
+
+```http
+GET /health
+```
+
+**Purpose:** Monitor API health and uptime for production deployments
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "version": "2.0.0",
+  "uptime_seconds": 3600.45,
+  "timestamp": "2024-01-15T10:30:00.123456"
+}
+```
 
 #### Get Transcript
 
@@ -173,6 +195,82 @@ curl "http://localhost:8001/languages/dQw4w9WgXcQ"
       "code": "es",
       "language": "Spanish",
       "is_generated": true
+    }
+  ]
+}
+```
+
+#### Download Transcript
+
+```http
+GET /transcript/download?url=<youtube_url>&format=<format>&lang=<language_code>
+```
+
+**Parameters:**
+- `url` (required): YouTube video URL
+- `format` (optional): Download format - `txt`, `srt`, or `vtt`. Defaults to `txt`
+- `lang` (optional): Language code (e.g., 'en', 'es', 'pt'). Defaults to 'en'
+
+**Example:**
+```bash
+curl -O -J "http://localhost:8001/transcript/download?url=https://youtube.com/watch?v=dQw4w9WgXcQ&format=srt&lang=en"
+```
+
+**Response:** File download with appropriate headers
+- **TXT format**: Plain text transcript
+- **SRT format**: SubRip subtitle file
+- **VTT format**: WebVTT subtitle file
+
+#### Batch Processing
+
+```http
+POST /transcripts/batch
+```
+
+**Request Body:**
+```json
+{
+  "urls": [
+    "https://youtube.com/watch?v=VIDEO_ID_1",
+    "https://youtube.com/watch?v=VIDEO_ID_2"
+  ],
+  "language": "en"
+}
+```
+
+**Example:**
+```bash
+curl -X POST "http://localhost:8001/transcripts/batch" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "urls": [
+      "https://youtube.com/watch?v=dQw4w9WgXcQ",
+      "https://youtu.be/oHg5SJYRHA0"
+    ],
+    "language": "en"
+  }'
+```
+
+**Response:**
+```json
+{
+  "total_requested": 2,
+  "successful": 1,
+  "failed": 1,
+  "results": [
+    {
+      "url": "https://youtube.com/watch?v=dQw4w9WgXcQ",
+      "video_id": "dQw4w9WgXcQ",
+      "success": true,
+      "transcript": "We're no strangers to love...",
+      "language": "en",
+      "available_languages": ["en", "es", "fr"]
+    },
+    {
+      "url": "https://youtu.be/oHg5SJYRHA0",
+      "video_id": "oHg5SJYRHA0",
+      "success": false,
+      "error": "No subtitles available for this video"
     }
   ]
 }
@@ -246,7 +344,7 @@ fetch(`${url}?${params}`)
     .then(data => console.log(data.transcript));
 ```
 
-### cURL Example
+### cURL Examples
 
 ```bash
 # Get Spanish transcript with fallback to English
@@ -254,6 +352,23 @@ curl -X GET "http://localhost:8001/transcript?url=https://youtube.com/watch?v=dQ
 
 # Check available languages first
 curl -X GET "http://localhost:8001/languages/dQw4w9WgXcQ"
+
+# Health check
+curl -X GET "http://localhost:8001/health"
+
+# Download transcript as SRT file
+curl -O -J "http://localhost:8001/transcript/download?url=https://youtube.com/watch?v=dQw4w9WgXcQ&format=srt"
+
+# Batch process multiple videos
+curl -X POST "http://localhost:8001/transcripts/batch" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "urls": [
+      "https://youtube.com/watch?v=dQw4w9WgXcQ",
+      "https://youtu.be/oHg5SJYRHA0"
+    ],
+    "language": "en"
+  }'
 ```
 
 ## Dependencies

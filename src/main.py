@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import Response
 import yt_dlp
 import re
 from typing import Optional, List, Dict, Any
@@ -8,6 +9,8 @@ import logging
 import tempfile
 import os
 import time
+import datetime
+from enum import Enum
 
 # Configure logging
 logging.basicConfig(
@@ -20,9 +23,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+# Global startup time for health endpoint
+startup_time = time.time()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    global startup_time
+    startup_time = time.time()
     logger.info("🚀 YouTube Transcript API starting up...")
     logger.info("✅ Logging configured successfully")
     yield
@@ -40,6 +48,36 @@ class TranscriptResponse(BaseModel):
     language: str
     transcript: str
     available_languages: List[str]
+
+class HealthResponse(BaseModel):
+    status: str
+    version: str
+    uptime_seconds: float
+    timestamp: str
+
+class DownloadFormat(str, Enum):
+    TXT = "txt"
+    SRT = "srt" 
+    VTT = "vtt"
+
+class BatchRequest(BaseModel):
+    urls: List[str]
+    language: Optional[str] = "en"
+    
+class BatchVideoResult(BaseModel):
+    url: str
+    video_id: Optional[str] = None
+    success: bool
+    transcript: Optional[str] = None
+    language: Optional[str] = None
+    available_languages: Optional[List[str]] = None
+    error: Optional[str] = None
+
+class BatchResponse(BaseModel):
+    total_requested: int
+    successful: int
+    failed: int
+    results: List[BatchVideoResult]
 
 def extract_video_id(url: str) -> str:
     patterns = [
@@ -213,11 +251,156 @@ def parse_vtt_content(vtt_content: str) -> str:
     
     return ' '.join(transcript_lines)
 
+def convert_to_srt(vtt_content: str) -> str:
+    """Convert VTT content to SRT format"""
+    lines = vtt_content.split('\n')
+    srt_lines = []
+    subtitle_count = 1
+    
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        
+        # Skip VTT header and metadata
+        if line.startswith('WEBVTT') or line.startswith('Kind:') or line.startswith('Language:'):
+            i += 1
+            continue
+        
+        # Check if line contains timestamp
+        if '-->' in line:
+            # Convert WebVTT timestamp to SRT format
+            timestamp_line = line.replace('.', ',')  # SRT uses comma instead of dot
+            srt_lines.append(str(subtitle_count))
+            srt_lines.append(timestamp_line)
+            
+            i += 1
+            # Collect subtitle text
+            subtitle_text = []
+            while i < len(lines) and lines[i].strip() and '-->' not in lines[i]:
+                text = lines[i].strip()
+                # Remove HTML tags and clean up
+                text = re.sub(r'<[^>]+>', '', text)
+                text = re.sub(r'&amp;', '&', text)
+                text = re.sub(r'&lt;', '<', text)
+                text = re.sub(r'&gt;', '>', text)
+                if text:
+                    subtitle_text.append(text)
+                i += 1
+            
+            if subtitle_text:
+                srt_lines.extend(subtitle_text)
+                srt_lines.append('')  # Empty line between subtitles
+                subtitle_count += 1
+        else:
+            i += 1
+    
+    return '\n'.join(srt_lines)
+
+def get_clean_vtt(vtt_content: str) -> str:
+    """Return clean VTT content with proper headers"""
+    if not vtt_content.startswith('WEBVTT'):
+        return 'WEBVTT\n\n' + vtt_content
+    return vtt_content
+
 @app.get("/")
 async def root():
     logger.info("🏠 Root endpoint accessed")
     print("🏠 Root endpoint accessed")  # Fallback print for debugging
     return {"message": "YouTube Transcript API (yt-dlp)", "usage": "GET /transcript?url=<youtube_url>&lang=<language_code>"}
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Health check endpoint for monitoring and load balancers"""
+    current_time = time.time()
+    uptime = current_time - startup_time
+    
+    return HealthResponse(
+        status="healthy",
+        version="2.0.0",
+        uptime_seconds=round(uptime, 2),
+        timestamp=datetime.datetime.now().isoformat()
+    )
+
+@app.get("/transcript/download")
+async def download_transcript(
+    url: str = Query(..., description="YouTube video URL"),
+    format: DownloadFormat = Query(DownloadFormat.TXT, description="Download format: txt, srt, or vtt"),
+    lang: Optional[str] = Query("en", description="Language code (e.g., 'en', 'es', 'pt')")
+):
+    """Download transcript in specified format (txt, srt, vtt)"""
+    try:
+        print(f"📥 Download request: url={url}, format={format}, lang={lang}")
+        logger.info(f"📥 Download request: url={url}, format={format}, lang={lang}")
+        
+        video_id = extract_video_id(url)
+        
+        # Get video info first
+        try:
+            info = get_video_info(video_id)
+        except Exception as e:
+            logger.error(f"Failed to get video info for {video_id}: {str(e)}")
+            raise HTTPException(status_code=404, detail=f"Video not found or unavailable: {str(e)}")
+        
+        # Get available subtitle languages
+        available_languages = []
+        subtitles = info.get('subtitles', {})
+        automatic_captions = info.get('automatic_captions', {})
+        
+        for lang_code in subtitles.keys():
+            available_languages.append(lang_code)
+        for lang_code in automatic_captions.keys():
+            if lang_code not in available_languages:
+                available_languages.append(lang_code)
+        
+        if not available_languages:
+            raise HTTPException(status_code=404, detail="No subtitles available for this video")
+        
+        # Determine which language to use
+        selected_language = None
+        if lang in available_languages:
+            selected_language = lang
+        elif 'en' in available_languages:
+            selected_language = 'en'
+        else:
+            selected_language = available_languages[0]
+        
+        # Download subtitles
+        try:
+            vtt_content, actual_language = download_subtitles(video_id, selected_language)
+            
+            # Convert to requested format
+            if format == DownloadFormat.TXT:
+                content = parse_vtt_content(vtt_content)
+                media_type = "text/plain"
+                filename = f"{video_id}_{actual_language}.txt"
+            elif format == DownloadFormat.SRT:
+                content = convert_to_srt(vtt_content)
+                media_type = "text/srt"
+                filename = f"{video_id}_{actual_language}.srt"
+            elif format == DownloadFormat.VTT:
+                content = get_clean_vtt(vtt_content)
+                media_type = "text/vtt"
+                filename = f"{video_id}_{actual_language}.vtt"
+            
+            logger.info(f"✅ Download successful for {video_id} ({actual_language}) in {format} format")
+            
+            return Response(
+                content=content,
+                media_type=media_type,
+                headers={"Content-Disposition": f"attachment; filename={filename}"}
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to download/convert subtitles for {video_id}: {str(e)}")
+            raise HTTPException(status_code=503, detail=f"Unable to process transcript: {str(e)}")
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in download for {video_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing download: {str(e)}")
 
 @app.get("/transcript", response_model=TranscriptResponse)
 async def get_transcript(
@@ -329,4 +512,95 @@ async def get_available_languages(video_id: str):
     except Exception as e:
         logger.error(f"Failed to get languages for {video_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching available languages: {str(e)}")
+
+@app.post("/transcripts/batch", response_model=BatchResponse)
+async def batch_transcripts(request: BatchRequest):
+    """Process multiple YouTube videos and return their transcripts"""
+    print(f"📦 Batch request for {len(request.urls)} videos, lang={request.language}")
+    logger.info(f"📦 Batch processing {len(request.urls)} videos, language: {request.language}")
+    
+    results = []
+    successful = 0
+    failed = 0
+    
+    for url in request.urls:
+        result = BatchVideoResult(url=url, success=False)
+        
+        try:
+            # Extract video ID
+            video_id = extract_video_id(url)
+            result.video_id = video_id
+            logger.info(f"🔄 Processing video {video_id} in batch")
+            
+            # Get video info
+            try:
+                info = get_video_info(video_id)
+            except Exception as e:
+                result.error = f"Video not found or unavailable: {str(e)}"
+                failed += 1
+                results.append(result)
+                continue
+            
+            # Get available languages
+            available_languages = []
+            subtitles = info.get('subtitles', {})
+            automatic_captions = info.get('automatic_captions', {})
+            
+            for lang_code in subtitles.keys():
+                available_languages.append(lang_code)
+            for lang_code in automatic_captions.keys():
+                if lang_code not in available_languages:
+                    available_languages.append(lang_code)
+            
+            result.available_languages = available_languages
+            
+            if not available_languages:
+                result.error = "No subtitles available for this video"
+                failed += 1
+                results.append(result)
+                continue
+            
+            # Determine language to use
+            selected_language = None
+            if request.language in available_languages:
+                selected_language = request.language
+            elif 'en' in available_languages:
+                selected_language = 'en'
+            else:
+                selected_language = available_languages[0]
+            
+            # Download and parse transcript
+            try:
+                vtt_content, actual_language = download_subtitles(video_id, selected_language)
+                transcript_text = parse_vtt_content(vtt_content)
+                
+                result.success = True
+                result.transcript = transcript_text
+                result.language = actual_language
+                successful += 1
+                
+                logger.info(f"✅ Batch: Successfully processed {video_id} ({actual_language})")
+                
+            except Exception as e:
+                result.error = f"Failed to download transcript: {str(e)}"
+                failed += 1
+                
+        except ValueError as e:
+            result.error = f"Invalid YouTube URL: {str(e)}"
+            failed += 1
+        except Exception as e:
+            result.error = f"Unexpected error: {str(e)}"
+            failed += 1
+            logger.error(f"❌ Batch: Unexpected error for {url}: {str(e)}")
+        
+        results.append(result)
+    
+    logger.info(f"📊 Batch complete: {successful} successful, {failed} failed out of {len(request.urls)}")
+    
+    return BatchResponse(
+        total_requested=len(request.urls),
+        successful=successful,
+        failed=failed,
+        results=results
+    )
 
