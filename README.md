@@ -17,8 +17,7 @@ A FastAPI-based REST API that extracts transcripts from YouTube videos with mult
 ```
 yt_caption_grab/
 ├── src/
-│   ├── main.py              # Main FastAPI application
-│   └── debug_endpoint.py    # Debug utilities
+│   └── main.py              # Main FastAPI application
 ├── tests/
 │   ├── __init__.py          # Tests package
 │   ├── conftest.py          # Pytest configuration
