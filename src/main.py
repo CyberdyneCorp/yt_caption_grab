@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 import yt_dlp
 import re
@@ -7,8 +8,6 @@ import logging
 import tempfile
 import os
 import time
-
-app = FastAPI(title="YouTube Transcript API (yt-dlp)", version="2.0.0")
 
 # Configure logging
 logging.basicConfig(
@@ -21,10 +20,20 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
     logger.info("🚀 YouTube Transcript API starting up...")
     logger.info("✅ Logging configured successfully")
+    yield
+    # Shutdown
+    logger.info("👋 YouTube Transcript API shutting down...")
+
+app = FastAPI(
+    title="YouTube Transcript API (yt-dlp)", 
+    version="2.0.0",
+    lifespan=lifespan
+)
 
 class TranscriptResponse(BaseModel):
     video_id: str
