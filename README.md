@@ -19,6 +19,10 @@ yt_caption_grab/
 ├── src/
 │   ├── main.py              # Main FastAPI application
 │   └── debug_endpoint.py    # Debug utilities
+├── tests/
+│   ├── __init__.py          # Tests package
+│   ├── conftest.py          # Pytest configuration
+│   └── test_main.py         # Main application tests
 ├── README.md                # Project documentation
 ├── requirements.txt         # Python dependencies
 └── .gitignore              # Git ignore rules
@@ -32,6 +36,62 @@ yt_caption_grab/
 ```bash
 pip install -r requirements.txt
 ```
+
+> **Note:** Testing dependencies (pytest, pytest-asyncio, pytest-cov, httpx) are included in requirements.txt
+
+## Testing
+
+This project includes comprehensive unit tests to ensure reliability and correctness.
+
+### Running Tests
+
+#### Run all tests:
+```bash
+pytest
+```
+
+#### Run tests with verbose output:
+```bash
+pytest -v
+```
+
+#### Run tests with coverage report:
+```bash
+pytest --cov=src --cov-report=html
+```
+
+#### Run specific test file:
+```bash
+pytest tests/test_main.py
+```
+
+#### Run specific test class or function:
+```bash
+pytest tests/test_main.py::TestAPI::test_root_endpoint
+pytest tests/test_main.py::TestVideoIdExtraction
+```
+
+### Test Structure
+
+- **`tests/test_main.py`**: Tests for the main API endpoints and video ID extraction
+- **`tests/conftest.py`**: Pytest configuration and fixtures
+- **`tests/__init__.py`**: Tests package initialization
+
+### What's Tested
+
+- ✅ API endpoint responses and status codes
+- ✅ Video ID extraction from various YouTube URL formats
+- ✅ Error handling for invalid inputs
+- ✅ Request validation and parameter handling
+
+### Adding New Tests
+
+When adding new features, please include corresponding tests:
+
+1. Create test files in the `tests/` directory
+2. Follow the naming convention `test_*.py`
+3. Use descriptive test names and docstrings
+4. Include both positive and negative test cases
 
 ## Usage
 
